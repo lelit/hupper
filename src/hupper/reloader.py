@@ -25,8 +25,9 @@ class FileMonitorProxy(object):
     when it should reload.
 
     """
-    def __init__(self, monitor_factory, verbose=1):
+    def __init__(self, monitor_factory, file_filter=None, verbose=1):
         self.monitor = monitor_factory(self.file_changed)
+        self.file_filter = file_filter
         self.verbose = verbose
         self.change_event = threading.Event()
         self.changed_paths = set()
@@ -50,10 +51,13 @@ class FileMonitorProxy(object):
         self.monitor.join()
 
     def file_changed(self, path):
-        if path not in self.changed_paths:
-            self.changed_paths.add(path)
-            self.out('%s changed; reloading ...' % (path,))
-        self.set_changed()
+        if self.file_filter and not self.file_filter(path):
+            self.out('%s changed; ignoring ...' % (path,))
+        else:
+            if path not in self.changed_paths:
+                self.changed_paths.add(path)
+                self.out('%s changed; reloading ...' % (path,))
+            self.set_changed()
 
     def is_changed(self):
         return self.change_event.is_set()
@@ -78,6 +82,8 @@ class Reloader(object):
     def __init__(self,
                  worker_path,
                  monitor_factory,
+                 file_filter=None,
+                 module_filter=None,
                  reload_interval=1,
                  verbose=1,
                  worker_args=None,
@@ -87,6 +93,8 @@ class Reloader(object):
         self.worker_args = worker_args
         self.worker_kwargs = worker_kwargs
         self.monitor_factory = monitor_factory
+        self.file_filter = file_filter
+        self.module_filter = module_filter
         self.reload_interval = reload_interval
         self.verbose = verbose
         self.monitor = None
@@ -140,6 +148,7 @@ class Reloader(object):
             self.worker_path,
             args=self.worker_args,
             kwargs=self.worker_kwargs,
+            module_filter=self.module_filter,
         )
         self.worker.start()
 
@@ -201,7 +210,7 @@ class Reloader(object):
         self.monitor.clear_changes()
 
     def _start_monitor(self):
-        self.monitor = FileMonitorProxy(self.monitor_factory, self.verbose)
+        self.monitor = FileMonitorProxy(self.monitor_factory, self.file_filter, self.verbose)
         self.monitor.start()
 
     def _stop_monitor(self):
@@ -228,6 +237,8 @@ def start_reloader(
     reload_interval=1,
     verbose=1,
     monitor_factory=None,
+    file_filter=None,
+    module_filter=None,
     worker_args=None,
     worker_kwargs=None,
 ):
@@ -288,5 +299,7 @@ def start_reloader(
         reload_interval=reload_interval,
         verbose=verbose,
         monitor_factory=monitor_factory,
+        file_filter=file_filter,
+        module_filter=module_filter,
     )
     return reloader.run()

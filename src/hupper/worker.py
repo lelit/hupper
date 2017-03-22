@@ -20,10 +20,11 @@ class WatchSysModules(threading.Thread):
     """ Poll ``sys.modules`` for imported modules."""
     poll_interval = 1
 
-    def __init__(self, callback):
+    def __init__(self, callback, module_filter):
         super(WatchSysModules, self).__init__()
         self.paths = set()
         self.callback = callback
+        self.module_filter = module_filter
         self.lock = threading.Lock()
         self.stopped = False
 
@@ -38,7 +39,7 @@ class WatchSysModules(threading.Thread):
     def update_paths(self):
         """Check sys.modules for paths to add to our path set."""
         with self.lock:
-            for path in iter_source_paths(iter_module_paths()):
+            for path in iter_source_paths(iter_module_paths(filter=self.module_filter)):
                 if path not in self.paths:
                     self.paths.add(path)
                     self.callback(path)
@@ -70,10 +71,12 @@ def iter_source_paths(paths):
                 yield py_path
 
 
-def iter_module_paths(modules=None):
+def iter_module_paths(modules=None, filter=None):
     """ Yield paths of all imported modules."""
     modules = modules or list(sys.modules.values())
     for module in modules:
+        if filter is not None and not filter(module.__name__):
+            continue
         try:
             filename = module.__file__
         except (AttributeError, ImportError):  # pragma: nocover
@@ -102,11 +105,12 @@ class WatchForParentShutdown(threading.Thread):
 
 class Worker(object):
     """ A helper object for managing a worker process lifecycle. """
-    def __init__(self, spec, args=None, kwargs=None):
+    def __init__(self, spec, args=None, kwargs=None, module_filter=None):
         super(Worker, self).__init__()
         self.worker_spec = spec
         self.worker_args = args
         self.worker_kwargs = kwargs
+        self.module_filter = module_filter
         self.files_queue = multiprocessing.Queue()
         self.pipe, self._c2p = multiprocessing.Pipe()
         self.terminated = False
@@ -129,6 +133,7 @@ class Worker(object):
             files_queue=self.files_queue,
             pipe=self._c2p,
             parent_pipe=self.pipe,
+            module_filter=self.module_filter,
         )
         self.process = multiprocessing.Process(target=worker_main, kwargs=kw)
         self.process.start()
@@ -209,7 +214,7 @@ class ReloaderProxy(IReloaderProxy):
 
 
 def worker_main(spec, files_queue, pipe, parent_pipe, spec_args=None,
-                spec_kwargs=None):
+                spec_kwargs=None, module_filter=None):
     if spec_args is None:
         spec_args = []
     if spec_kwargs is None:
@@ -237,7 +242,7 @@ def worker_main(spec, files_queue, pipe, parent_pipe, spec_args=None,
     parent_watcher = WatchForParentShutdown(pipe)
     parent_watcher.start()
 
-    poller = WatchSysModules(files_queue.put)
+    poller = WatchSysModules(files_queue.put, module_filter)
     poller.start()
 
     # import the worker path before polling sys.modules
