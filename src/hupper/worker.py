@@ -75,8 +75,14 @@ def iter_module_paths(modules=None, filter=None):
     """ Yield paths of all imported modules."""
     modules = modules or list(sys.modules.values())
     for module in modules:
-        if filter is not None and not filter(module.__name__):
-            continue
+        if filter is not None:
+            try:
+                name = module.__name__
+            except (AttributeError, ImportError):  # pragma: nocover
+                pass
+            else:
+                if not filter(name):
+                    continue
         try:
             filename = module.__file__
         except (AttributeError, ImportError):  # pragma: nocover
